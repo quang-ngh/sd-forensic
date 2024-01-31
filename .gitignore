@@ -1,0 +1,13 @@
+__pycache__/
+datasets/
+examples/
+experiments/
+
+#	Media
+*.jpg
+*.png
+*.mp4
+
+#	Checkpoints
+*.pth
+*.pt
