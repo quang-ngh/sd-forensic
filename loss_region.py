@@ -16,6 +16,7 @@ from src.pipline_diff_forensics import DiffForensicPipeline, DiffEditInversionPi
 from tools.image_tools import *
 from tools.utils import *
 import lpips
+from torch.utils.tensorboard import SummaryWriter
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -26,6 +27,7 @@ def get_args():
     parser.add_argument("--checkpoint-path", type=str, default="")
     parser.add_argument("--experiment-name", type=str)
     parser.add_argument("--real-image", type=bool, default=False)
+    parser.add_argument("--tensorboard", action="store_true")
     
     #   Invert configuration
     parser.add_argument("--inference-steps", type=int, default=50)
@@ -39,19 +41,23 @@ def get_args():
     return parser.parse_args()
 
 def main(args):
-    
+
+    ######################################  Setup   ##########################################
     DEVICE=torch.device("cuda")    
     print_args(args) 
     #   Setup workspace folder
-    exp_dir = f"experiments/{args.experiment_name}"
+    exp_dir = f"experiments/{args.experiment_name}"    
+    tb_writer = SummaryWriter(f"{exp_dir}/tensorboard") if args.tensorboard else None
+
     if not os.path.isdir(exp_dir):
         os.makedirs(exp_dir)
     caption_dir = args.caption_dir
     auth_dir = args.image_dir
     mask_dir = args.mask_dir
     edited_dir = args.edited_dir
+    ###########################################################################################
 
-    #   Loading pipeline SD
+    ############################################### Models/Data  ##############################
     pipe = DiffForensicPipeline.from_pretrained(
         args.checkpoint_path,
         torch_dtype=torch.float32,
@@ -67,9 +73,13 @@ def main(args):
                                            ,caption_dir=caption_dir,n_samples = 3, offset=0, dataset="autosplice")
     images = images.to(DEVICE)
     edited_images = edited_images.to(DEVICE)
+    ############################################################################################
+    #   Create dir to store the inverse latent
+    for idx in range(images.shape[0]):
+        if not os.path.isdir(f"{exp_dir}/image_{idx}"):
+            os.makedirs(f"{exp_dir}/image_{idx}")
 
     text = ["a photo of a bus"]
-
     if args.real_image:
         input_images = images
     else:
@@ -93,12 +103,8 @@ def main(args):
         args.end = int(args.inference_steps * args.inpaint_strength)
     total_steps = all_inv_latents.shape[1] 
 
-
     for step in range(start, end):
         inv_step = total_steps - (step + 1)
-        if not os.path.isdir(f"{exp_dir}/inverse_step_{inv_step}") :
-            os.makedirs(f"{exp_dir}/inverse_step_{inv_step}")
-
         z0_inv = all_inv_latents[:, inv_step, :, : ,:].to(DEVICE)
         with torch.no_grad():
             img_torch = pipe.decode_latents(z0_inv, return_type="pt").to(DEVICE)
@@ -114,12 +120,14 @@ def main(args):
             for _ in range(expand_dims):
                 batch_max.unsqueeze_(-1)
                 batch_min.unsqueeze_(-1)
-        # breakpoint()
         #   [B, C, H, W]
         loss = torch.mean(loss, dim = 1)                            
         for idx, loss_map in enumerate(loss): 
             cam, vis = overlay_heatmap(input_images[idx, :, :, :], loss_map, normalize=True) 
-            cv2.imwrite(f"{exp_dir}/inverse_step_{inv_step}/image_{idx}.png", vis)
+            cv2.imwrite(f"{exp_dir}/image_{idx}/inverse_step_{inv_step}.png", vis)
+            #   Write tensorboard
+            if tb_writer:
+                tb_writer.add_image(f"image_{idx}", vis, inv_step, dataformats="HWC")
 
 if __name__ == '__main__':
     args = get_args()
