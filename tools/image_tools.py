@@ -115,7 +115,7 @@ def save_torch_img(img_tensor: torch.Tensor):
         )
     return images 
 
-def overlay_heatmap(images, heatmap):
+def overlay_heatmap(images, heatmap, normalize=False):
     """
     args: 
         images: torch.Tensor: single image
@@ -134,6 +134,11 @@ def overlay_heatmap(images, heatmap):
     # breakpoint() 
     #   Overlay heatmap
     heatmap = heatmap.clone().cpu().numpy()
+    if normalize:
+        min_value = heatmap.min()
+        max_value = heatmap.max()
+        heatmap = (heatmap - min_value) / (max_value - min_value)
+
     heatmap = (heatmap*255.0).astype("uint8")
     heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
     heatmap = heatmap.astype("float32") / 255.0

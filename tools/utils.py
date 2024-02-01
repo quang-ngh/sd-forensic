@@ -54,6 +54,9 @@ def register_loss(loss_type, reduction="none"):
         raise ValueError("Cannot create loss object")
     return loss_fn
 
+def print_args(args):
+    for arg in vars(args):
+        print(f"{arg}: {getattr(args, arg)}")
 # if __name__ == '__main__':
 #     psnr_metric = custom_psnr()
 #     preds = torch.randn(4,3,16,16).cuda()
