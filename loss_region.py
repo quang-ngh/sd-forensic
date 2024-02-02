@@ -20,14 +20,15 @@ from torch.utils.tensorboard import SummaryWriter
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--caption-dir", type=str, default="datasets/AutoSplice/Caption")
-    parser.add_argument("--image-dir", type=str, default="datasets/AutoSplice/Authentic")
-    parser.add_argument("--mask-dir", type=str, default="datasets/AutoSplice/Mask")
-    parser.add_argument("--edited-dir", type=str, default="datasets/AutoSplice/Forged_JPEG100")
+    parser.add_argument("--caption-dir", type=str, default="../datasets/AutoSplice/Caption")
+    parser.add_argument("--image-dir", type=str, default="../datasets/AutoSplice/Authentic")
+    parser.add_argument("--mask-dir", type=str, default="../datasets/AutoSplice/Mask")
+    parser.add_argument("--edited-dir", type=str, default="../datasets/AutoSplice/Forged_JPEG100")
     parser.add_argument("--checkpoint-path", type=str, default="")
     parser.add_argument("--experiment-name", type=str)
-    parser.add_argument("--real-image", type=bool, default=False)
+    parser.add_argument("--real-image", action="store_true")
     parser.add_argument("--tensorboard", action="store_true")
+    parser.add_argument("--concat-images", action="store_true")
     
     #   Invert configuration
     parser.add_argument("--inference-steps", type=int, default=50)
@@ -80,10 +81,11 @@ def main(args):
             os.makedirs(f"{exp_dir}/image_{idx}")
 
     text = ["a photo of a bus"]
+    input_images = edited_images
     if args.real_image:
         input_images = images
-    else:
-        input_images = edited_images
+        
+        breakpoint()
     all_inv_latents = pipe.invert(
         prompt =  text * images.shape[0],
         # prompt = list_promtps * images.shape[0],
@@ -105,25 +107,38 @@ def main(args):
 
     for step in range(start, end):
         inv_step = total_steps - (step + 1)
-        z0_inv = all_inv_latents[:, inv_step, :, : ,:].to(DEVICE)
+        z0_inv = all_inv_latents[:, step, :, : ,:].to(DEVICE)
         with torch.no_grad():
             img_torch = pipe.decode_latents(z0_inv, return_type="pt").to(DEVICE)
             img_torch = img_torch.permute(0, 3, 1, 2)
-
         loss = loss_fn(input_images, img_torch)
         #   If using PSNR score --> normalized the psnr to visualize the heatmap
         if args.loss_type == "psnr":
             batch_max = torch.max(loss.clone().view(loss.shape[0], -1), dim=-1).values
             batch_min = torch.min(loss.clone().view(loss.shape[0], -1), dim=-1).values
-
             expand_dims = len(loss.shape) - len(batch_max.shape)
             for _ in range(expand_dims):
                 batch_max.unsqueeze_(-1)
                 batch_min.unsqueeze_(-1)
+
         #   [B, C, H, W]
         loss = torch.mean(loss, dim = 1)                            
+
+        #   Concat the input + reconstruction with the overlay heatmap
+        if args.concat_images:
+            img_torch_uint8 = img_torch.permute(0, 2, 3, 1)
+            input_img_uint8 = input_images.permute(0, 2, 3, 1)
+            img_torch_uint8 = convert2uint8(img_torch_uint8)
+            input_img_uint8 = convert2uint8(input_img_uint8)
+
         for idx, loss_map in enumerate(loss): 
             cam, vis = overlay_heatmap(input_images[idx, :, :, :], loss_map, normalize=True) 
+            if args.concat_images:
+                vis = np.hstack([
+                    input_img_uint8[idx, :, :, :], 
+                    img_torch_uint8[idx, :, :, :],
+                    vis
+                ])
             cv2.imwrite(f"{exp_dir}/image_{idx}/inverse_step_{inv_step}.png", vis)
             #   Write tensorboard
             if tb_writer:
